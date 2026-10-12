@@ -78,15 +78,6 @@ func sysupdateAll(ctx context.Context) error {
 	return nil
 }
 
-// enableSuggested enables the components and features whose SuggestOn*
-// conditions now hold, e.g. after the machine tags changed.
-func enableSuggested(ctx context.Context) error {
-	if err := systemdcmd.Call(ctx, "systemctl", "start", "systemd-sysupdate-auto-enable.service"); err != nil {
-		return fmt.Errorf("failed to trigger systemd-sysupdate-auto-enable service: %w", err)
-	}
-	return nil
-}
-
 func sysupdateRefresh(ctx context.Context) error {
 	errs := []error{
 		// systemd-confext refresh

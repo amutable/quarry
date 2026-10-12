@@ -116,10 +116,6 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 			return fmt.Errorf("fetch machine tags before update: %w", err)
 		}
 
-		// Pick up tags the user set by hand, not only ones a confext ships.
-		if err := enableSuggested(ctx); err != nil {
-			return err
-		}
 		if err := sysupdateAll(ctx); err != nil {
 			return err
 		}
@@ -150,9 +146,6 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 			slog.Info("Machine tags changed by refresh, running another update pass.",
 				"iteration", iteration, "before", tags, "after", newTags)
 			tags = newTags
-			if err := enableSuggested(ctx); err != nil {
-				return err
-			}
 			if err := sysupdateAll(ctx); err != nil {
 				return err
 			}
