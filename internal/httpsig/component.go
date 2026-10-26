@@ -82,7 +82,8 @@ func (c Component) validate() error {
 func (c Component) resolve(m message) (string, bool, error) {
 	if c.req {
 		var err error
-		if m, err = m.related(); err != nil {
+		m, err = m.related()
+		if err != nil {
 			return "", false, err
 		}
 	}

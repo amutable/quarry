@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"go.amutable.dev/quarry/internal/expand"
 	"go.amutable.dev/quarry/internal/tufext"
+	"go.amutable.dev/quarry/internal/wimseagent"
 )
 
 const uuidPat = `[0-9a-f]{32}`
@@ -1142,4 +1144,82 @@ func TestRootTrustSources_ExpandExhaustive(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestParseConfig_Auth(t *testing.T) {
+	conf, err := Parse(strings.NewReader(`
+config_version = 1
+[repo.signed]
+root_trust = "insecure-tofu"
+meta_root_url = "https://customerdata.example:8443/machine-id/abc"
+auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker", wimse_audience = "urn:example:wimse", varlink = "unix:/run/test.sock" }
+
+[repo.plain]
+root_trust = "insecure-tofu"
+`))
+	require.NoError(t, err)
+
+	transport, ok := conf.Repos["signed"].HTTPClient().Transport.(*wimseagent.Transport)
+	require.True(t, ok, "a wimse repo signs its requests")
+	assert.Equal(t, wimseagent.ID{WitAudience: "urn:amutable:quarry-worker", Provider: "unix:/run/test.sock"}, transport.WitCred.ID(), "WIT identity")
+	assert.Equal(t, "urn:example:wimse", transport.WimseAudience, "WIMSE audience")
+
+	assert.Same(t, http.DefaultClient, conf.Repos["plain"].HTTPClient())
+}
+
+func TestParseConfig_AuthShared(t *testing.T) {
+	conf, err := Parse(strings.NewReader(`
+config_version = 1
+[repo.a]
+root_trust = "insecure-tofu"
+auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker", varlink = "unix:/run/shared.sock" }
+
+[repo.b]
+root_trust = "insecure-tofu"
+auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker", varlink = "unix:/run/shared.sock" }
+
+[repo.c]
+root_trust = "insecure-tofu"
+auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker", wimse_audience = "urn:example:c", varlink = "unix:/run/shared.sock" }
+`))
+	require.NoError(t, err)
+
+	transport := func(name string) *wimseagent.Transport {
+		transport, ok := conf.Repos[name].HTTPClient().Transport.(*wimseagent.Transport)
+		require.True(t, ok, "repo %s signs its requests", name)
+		return transport
+	}
+	assert.Same(t, conf.Repos["a"].HTTPClient(), conf.Repos["b"].HTTPClient(), "same identity and WIMSE audience share a client")
+	assert.Empty(t, transport("a").WimseAudience, "wimse_audience is optional")
+	assert.NotSame(t, conf.Repos["a"].HTTPClient(), conf.Repos["c"].HTTPClient(), "another WIMSE audience gets its own client")
+	assert.Same(t, transport("a").WitCred, transport("c").WitCred, "but shares the WIT credential")
+}
+
+func TestParseConfig_AuthInvalid(t *testing.T) {
+	for auth, wantErr := range map[string]string{
+		`{ type = "basic" }`:                       `unsupported auth type "basic"`,
+		`{ type = "wimse" }`:                       `auth "wimse": missing required field "wit_audience"`,
+		`{ type = "wimse", wimse_audience = "x" }`: `auth "wimse": missing required field "wit_audience"`,
+		`{ type = "wimse", audience = "x" }`:       `auth "wimse" has unsupported field "audience"`,
+		`{ type = "wimse", wit_audiance = "x" }`:   `auth "wimse" has unsupported field "wit_audiance"`,
+		`"wimse"`:                                  `auth "wimse" cannot be specified by name alone`,
+	} {
+		t.Run(auth, func(t *testing.T) {
+			_, err := Parse(strings.NewReader("config_version = 1\n[repo.r]\nroot_trust = \"insecure-tofu\"\nauth = " + auth + "\n"))
+			require.ErrorContains(t, err, wantErr)
+		})
+	}
+}
+
+func TestMerge_AuthAddedByDropIn(t *testing.T) {
+	cfg := mergeFragments(t, `
+config_version = 1
+[repo."example.com/m"]
+root_trust = "insecure-tofu"
+`, `
+config_version = 1
+[repo."example.com/m"]
+auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker" }
+`)
+	assert.Equal(t, &tomlRepoAuth{tomlWimseAuth{WitAudience: "urn:amutable:quarry-worker"}}, cfg.Repos["example.com/m"].Auth)
 }

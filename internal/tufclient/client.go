@@ -16,7 +16,6 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -149,6 +148,9 @@ func RepoClient(ctx context.Context, cacheDir *pathrs.Root, repoLike tufext.Repo
 	tufConfig.LocalTargetsDir = fmt.Sprintf("/tmp/quarry-targets-cache/%s", repo.Name)
 	// At the moment our publishing flow doesn't use the <hash>.<file> naming.
 	tufConfig.PrefixTargetsWithHash = false
+	if err := tufConfig.SetDefaultFetcherHTTPClient(repo.HTTPClient()); err != nil {
+		return nil, fmt.Errorf("set tuf-client http client: %w", err)
+	}
 
 	if err := tufConfig.EnsurePathsExist(); err != nil {
 		return nil, fmt.Errorf("ensure tuf-client paths exist: %w", err)
@@ -296,7 +298,7 @@ func (info *TargetInfo) Fetch(ctx context.Context) (io.ReadCloser, error) {
 		if err != nil {
 			return nil, fmt.Errorf("check target candidate urls: %w", err)
 		}
-		rdr, _, err := httputils.VerifiedHTTPGet(ctx, http.DefaultClient, url, info.Length, info.Hashes)
+		rdr, _, err := httputils.VerifiedHTTPGet(ctx, info.Repo.HTTPClient(), url, info.Length, info.Hashes)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				slog.Info("Target file not available at URL, trying next candidate...",
@@ -426,7 +428,7 @@ func (client *Client) trustedMetadataTargetsFetcher(repo *tufext.Repository, met
 			return nil, err
 		}
 
-		rdr, _, err := httputils.VerifiedHTTPGet(ctx, http.DefaultClient, metaURL, metaRef.Length, metaRef.Hashes)
+		rdr, _, err := httputils.VerifiedHTTPGet(ctx, repo.HTTPClient(), metaURL, metaRef.Length, metaRef.Hashes)
 		if err != nil {
 			return nil, fmt.Errorf("get role %s (%s): %w", roleName, metaURL, err)
 		}
