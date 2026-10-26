@@ -16,6 +16,7 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -295,7 +296,7 @@ func (info *TargetInfo) Fetch(ctx context.Context) (io.ReadCloser, error) {
 		if err != nil {
 			return nil, fmt.Errorf("check target candidate urls: %w", err)
 		}
-		rdr, _, err := httputils.VerifiedHTTPGet(ctx, url, info.Length, info.Hashes)
+		rdr, _, err := httputils.VerifiedHTTPGet(ctx, http.DefaultClient, url, info.Length, info.Hashes)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				slog.Info("Target file not available at URL, trying next candidate...",
@@ -425,7 +426,7 @@ func (client *Client) trustedMetadataTargetsFetcher(repo *tufext.Repository, met
 			return nil, err
 		}
 
-		rdr, _, err := httputils.VerifiedHTTPGet(ctx, metaURL, metaRef.Length, metaRef.Hashes)
+		rdr, _, err := httputils.VerifiedHTTPGet(ctx, http.DefaultClient, metaURL, metaRef.Length, metaRef.Hashes)
 		if err != nil {
 			return nil, fmt.Errorf("get role %s (%s): %w", roleName, metaURL, err)
 		}
