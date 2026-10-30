@@ -71,8 +71,7 @@ func (TofuRootTrust) FetchRoot(ctx context.Context, repo *Repository) (_ []byte,
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := http.DefaultClient
-	res, err := client.Do(req)
+	res, err := repo.HTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", rootURL, err)
 	}

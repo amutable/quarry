@@ -27,14 +27,14 @@ const MaxErrorBytes = 128
 // the server.
 const ErrorReadDeadline = 200 * time.Millisecond
 
-// VerifiedHTTPGet is a wrapper around [http.Client.Do] but the returned
+// VerifiedHTTPGet is a wrapper around client.Do but the returned
 // [io.ReadCloser] is wrapped in a [hardening.VerifiedReadCloser] so that
 // endless read and other attacks are protected against. You *must* check the
 // error return from [io.ReadCloser.Close] once you are done reading data and
 // before you use it for anything.
 //
 // TODO: Should we also return the response information...?
-func VerifiedHTTPGet(ctx context.Context, url *url.URL, length int64, hashes tufmetadata.Hashes) (_ io.ReadCloser, _ *http.Response, Err error) {
+func VerifiedHTTPGet(ctx context.Context, client *http.Client, url *url.URL, length int64, hashes tufmetadata.Hashes) (_ io.ReadCloser, _ *http.Response, Err error) {
 	// Make sure the hashes are good before doing the request -- they get
 	// re-converted later in [tufext.VerifiedReadCloser].
 	if _, err := tufext.HashesToDigest(hashes); err != nil {
@@ -53,7 +53,6 @@ func VerifiedHTTPGet(ctx context.Context, url *url.URL, length int64, hashes tuf
 		return nil, nil, fmt.Errorf("create http request: %w", err)
 	}
 
-	client := http.DefaultClient
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch %s: %w", url, err)

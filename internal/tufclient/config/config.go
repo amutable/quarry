@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -179,6 +180,22 @@ type Repository struct {
 	// DataRootURL is the base URL for the directory containing target data
 	// files. If unset, the default is derived by [tufext.Repository.DataURL].
 	DataRootURL *tomlURL `toml:"data_root_url"`
+
+	// Auth says how requests to the MetaRootURL host authenticate. Nil means
+	// no authentication.
+	Auth *tomlRepoAuth `toml:"auth"`
+
+	// httpClient is shared by every config that authenticates with the same
+	// audience and host (see [identityagent.Client]).
+	httpClient *http.Client
+}
+
+// HTTPClient returns the client to fetch this repository's files with.
+func (repo Repository) HTTPClient() *http.Client {
+	if repo.httpClient == nil {
+		return http.DefaultClient
+	}
+	return repo.httpClient
 }
 
 const defaultOrderIndex = 100
@@ -201,6 +218,7 @@ func (repo Repository) AsRepository() *tufext.Repository {
 	extRepo := &tufext.Repository{
 		Name:      repo.Name,
 		RootTrust: repo.RootTrust.RootTrustSource,
+		Client:    repo.httpClient,
 	}
 	if u := repo.MetaRootURL; u != nil {
 		extRepo.MetaRootURL = generics.Ptr(u.URL)
@@ -349,11 +367,13 @@ func (cfg *Config) expandAndValidate() error {
 			}
 		}
 		// Verify the [tufext.Repository]-derived URLs are actually valid URLs.
-		if err := errors.Join(
-			generics.TakeError(repo.AsRepository().RootURL()),
-			generics.TakeError(repo.AsRepository().DataURL()),
-		); err != nil {
+		metaRootURL, err := repo.AsRepository().RootURL()
+		if err := errors.Join(err, generics.TakeError(repo.AsRepository().DataURL())); err != nil {
 			return fmt.Errorf("repository %s has invalid default url: %w", repo.Name, err)
+		}
+
+		if repo.Auth != nil {
+			repo.httpClient = repo.Auth.httpClient(metaRootURL.Host)
 		}
 	}
 	return nil
@@ -398,6 +418,9 @@ func (cfg *Config) merge(fragment *Config) error {
 		}
 		old.MetaRootURL = mergeURL(old.MetaRootURL, repo.MetaRootURL)
 		old.DataRootURL = mergeURL(old.DataRootURL, repo.DataRootURL)
+		if repo.Auth != nil {
+			old.Auth = repo.Auth
+		}
 	}
 	return nil
 }

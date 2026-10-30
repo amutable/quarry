@@ -19,7 +19,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tufmetadata "github.com/theupdateframework/go-tuf/v2/metadata"
+	"snai.pe/go-varlink"
 
 	"go.amutable.dev/quarry/cmd/internal/cliext"
 	"go.amutable.dev/quarry/internal/ctxext"
@@ -811,4 +814,52 @@ func TestHTTP_ReleaseLayouts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// startFakeIdentityAgent serves GetWorkloadIdentityToken with a fixed WIT and
+// returns the agent's varlink URI.
+func startFakeIdentityAgent(t *testing.T) string {
+	t.Helper()
+	uri := "unix:" + filepath.Join(t.TempDir(), "agent") //nolint:forbidigo // test code
+	listener, err := varlink.Listen(uri)
+	require.NoError(t, err, "listen on fake agent socket")
+	t.Cleanup(func() { _ = listener.Close() })
+
+	var mux varlink.ServeMux
+	mux.HandleFunc("com.amutable.IdentityAgent.GetWorkloadIdentityToken", func(w varlink.ReplyWriter, _ *varlink.Call) {
+		_ = w.WriteReply(map[string]any{"token": "wit", "expires_in": 3600})
+	})
+	srv := &varlink.Server{Handler: &mux}
+	go func() { _ = srv.Serve(listener) }()
+	return uri
+}
+
+// Targets of a repo with auth are served by quarry-client itself, fetched with
+// the repo's signing client: a redirect would make sysupdate fetch them
+// unsigned. The gate in front of the repo refuses any request without a WIT.
+func TestHTTPProxyTarget_AuthRepoIsStreamed(t *testing.T) {
+	srv := testrepo.New(t)
+	files, _ := publishNightlyImage(t, srv)
+
+	repoURL, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(repoURL)
+	gate := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("Workload-Identity-Token") == "" {
+			http.Error(rw, "unsigned", http.StatusUnauthorized)
+			return
+		}
+		proxy.ServeHTTP(rw, req)
+	}))
+	t.Cleanup(gate.Close)
+
+	auth := fmt.Sprintf(`auth = { type = "wimse", audience = "urn:amutable:quarry-worker", varlink = %q }`, startFakeIdentityAgent(t))
+	block := srv.ConfigBlock("nightly", testrepo.ConfigWithExtraLines(auth))
+	server := newServer(t, strings.ReplaceAll(block, srv.URL, gate.URL))
+
+	resp, body := serverGet(t, server, "/"+usrTarget)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, files[usrTarget], body)
+	assert.Empty(t, resp.Header.Values("Location"))
+	assert.Equal(t, sha256Digest(files[usrTarget]), resp.Header.Get("Content-Digest"))
 }

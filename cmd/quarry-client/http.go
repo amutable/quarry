@@ -32,6 +32,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"go.amutable.dev/quarry/internal/third_party/funchelpers"
+	"go.amutable.dev/quarry/internal/tufclient"
 	"go.amutable.dev/quarry/internal/tufext"
 	"go.amutable.dev/quarry/internal/xsysupdate"
 )
@@ -220,6 +221,12 @@ func proxyTargetFile(rw http.ResponseWriter, req *http.Request) (Err error) {
 		return nil
 	}
 
+	// A redirect would send systemd-pull to the repo without this repo's
+	// request signatures, so targets of a repo with auth are proxied instead.
+	if info.Repo.Client != nil {
+		return streamTargetFile(rw, req, info)
+	}
+
 	// Redirect to the first target URL.
 	// TODO(uapi16): Once we get UAPI.16 support into systemd, we can serve a
 	// manifest that lists every URL candidate as an alternative contents source
@@ -250,6 +257,37 @@ func proxyTargetFile(rw http.ResponseWriter, req *http.Request) (Err error) {
 		return nil
 	}
 	return errors.New("no fetch urls defined for target")
+}
+
+// streamTargetFile serves the target's contents, fetched with the repo's own
+// HTTP client. The digest is only checked at EOF, after the whole body has been
+// written, so a mismatch aborts the connection but cannot take back the bytes:
+// the client must check the body against Content-Digest.
+func streamTargetFile(rw http.ResponseWriter, req *http.Request, info *tufclient.TargetInfo) error {
+	ctx := req.Context()
+
+	rdr, err := info.Fetch(ctx)
+	if errors.Is(err, fs.ErrNotExist) {
+		http.NotFound(rw, req)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("fetch target %s from repo %s: %w", info.Path, info.Repo.Name, err)
+	}
+
+	rw.Header().Set("Content-Length", strconv.FormatInt(info.Length, 10))
+	rw.Header().Set("Content-Type", "application/octet-stream")
+	if digestValue := hashesToContentDigest(info.Hashes); digestValue != "" {
+		rw.Header().Set("Content-Digest", digestValue)
+		rw.Header().Set("Repr-Digest", digestValue)
+	}
+	_, copyErr := io.Copy(rw, rdr)
+	if err := errors.Join(copyErr, rdr.Close()); err != nil {
+		slog.ErrorContext(ctx, "Aborting target response",
+			"repo", info.Repo.Name, "target", info.Path, "err", err.Error())
+		panic(http.ErrAbortHandler)
+	}
+	return nil
 }
 
 // newSysupdateHandler returns a [http.Handler] that impements our sysupdate

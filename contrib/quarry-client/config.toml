@@ -77,3 +77,14 @@ cache_dir = "/var/lib/quarry-client/latest-metadata"
 ## overridden by setting the following two settings.
 #meta_root_url = "https://tufmetadata.example.com/tuf/%m"
 #data_root_url = "https://cloud-storage.example.com/repo/%m/foobar"
+
+## Requests to the meta_root_url host can be signed as this machine, for
+## servers that only serve a repository to the machine it belongs to. Each
+## request then carries the machine's WIMSE workload identity token for
+## "audience", from the varlink service at "varlink" implementing
+## com.amutable.IdentityAgent (default: amutablectl's, at
+## unix:/run/amutable/com.amutable.IdentityAgent), and an RFC 9421 signature
+## by a key quarry-client holds in memory and the token binds. Requests to
+## other hosts (such as a separate data_root_url) are not signed. "wimse" is
+## the only supported type.
+#auth = { type = "wimse", audience = "urn:amutable:quarry-worker" }
