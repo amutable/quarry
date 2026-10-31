@@ -71,6 +71,8 @@ github.com/schollz/progressbar/v3 v3.19.1/go.mod h1:LFL7jqimKxfhero4K1eCkUr/6R39
 github.com/secure-systems-lab/go-securesystemslib v0.11.1 h1:ayahDPjfSIqKegyt5YVGEvQ7SAi72GHXTy+b2YjUd5w=
 github.com/secure-systems-lab/go-securesystemslib v0.11.1/go.mod h1:UyOjhoZLi76ir63u1ptubEevVe6dlNPmNxwgVvKqFFY=
 github.com/sergi/go-diff v1.0.0/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAmXWZgo=
+github.com/shogo82148/go-sfv v0.3.6 h1:8MpndGsf6vZ3dHeTYN8TnKjL5TstUYIpwS7urkehv2o=
+github.com/shogo82148/go-sfv v0.3.6/go.mod h1:VYNXeh/Gj0TO5PR+K7ZNTRnxKe233q6kYU/qIL0s6s4=
 github.com/sigstore/protobuf-specs v0.5.0 h1:F8YTI65xOHw70NrvPwJ5PhAzsvTnuJMGLkA4FIkofAY=
 github.com/sigstore/protobuf-specs v0.5.0/go.mod h1:+gXR+38nIa2oEupqDdzg4qSBT0Os+sP7oYv6alWewWc=
 github.com/sigstore/sigstore v1.10.4 h1:ytOmxMgLdcUed3w1SbbZOgcxqwMG61lh1TmZLN+WeZE=

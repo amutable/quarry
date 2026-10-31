@@ -15,6 +15,7 @@ require (
 	github.com/opencontainers/umoci v0.6.0
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
+	github.com/shogo82148/go-sfv v0.3.6
 	github.com/stretchr/testify v1.12.1
 	github.com/theupdateframework/go-tuf/v2 v2.4.1
 	github.com/tiendc/go-deepcopy v1.7.2
