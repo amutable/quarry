@@ -333,11 +333,15 @@ func (h *Hostnamed) Stop(t *testing.T) {
 		return
 	}
 	_ = h.cmd.Process.Signal(syscall.SIGTERM)
+	var err error
 	select {
-	case <-h.waitCh:
+	case err = <-h.waitCh:
 	case <-time.After(10 * time.Second):
 		_ = h.cmd.Process.Kill()
-		<-h.waitCh
+		err = <-h.waitCh
+	}
+	if err != nil {
+		t.Logf("systemd-hostnamed exited uncleanly: %v", err)
 	}
 	h.cmd = nil
 }
