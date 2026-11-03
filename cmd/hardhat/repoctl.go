@@ -99,6 +99,7 @@ var repoctlInitCommand = &cli.Command{
 
 		// Create an initial transaction to use.
 		initTxn := tufrepo.InitTxn(signedRoot)
+		initTxn.RefTime, _ = ctxext.RefTime(ctx)
 		// TODO: Make the initial transaction configurable...
 
 		// TODO: Do we actually want to Sign this...?
