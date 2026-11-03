@@ -150,7 +150,8 @@ func TestErrorIter_EarlyTermination(t *testing.T) {
 		return nil
 	})
 
-	for range seq {
+	for _, err := range seq {
+		require.NoError(t, err)
 		break
 	}
 	assert.Equal(t, 1, produced, "producer should stop after consumer breaks")
@@ -378,7 +379,8 @@ func TestSeqRight_EarlyTermination(t *testing.T) {
 	), &yielded)
 
 	var count int
-	for range generics.SeqRight(src) {
+	for err := range generics.SeqRight(src) {
+		require.NoError(t, err)
 		count++
 		if count == 3 {
 			break
