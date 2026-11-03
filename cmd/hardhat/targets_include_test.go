@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,7 +54,7 @@ func TestTargetsUnsignedIncludeWithOverrideURLs(t *testing.T) {
 	include := filepath.Join(dir, "include.json") //nolint:forbidigo // test code
 	abcHash := hashAlgorithm.FromBytes([]byte("abc")).Encoded()
 	doc := `{"signatures": [{"keyid": "x", "sig": "00"}], "signed": {
-		"_type": "targets", "spec_version": "1.0.31", "version": 1, "expires": "2030-01-01T00:00:00Z",
+		"_type": "targets", "spec_version": "1.0.31", "version": 42, "expires": "2030-01-01T00:00:00Z",
 		"targets": {
 			"a.raw": {"length": 1, "hashes": {"sha256": "` + strings.Repeat("a", 64) + `"}},
 			".quarry/sysupdate.d/a.transfer": {"length": 3, "hashes": {"sha256": "` + abcHash + `"}, "x-quarry-inline-data": "YWJj"}
@@ -79,10 +80,37 @@ func TestTargetsUnsignedIncludeWithOverrideURLs(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &got))
 	assert.NotNil(t, got.Signatures)
 	assert.Empty(t, got.Signatures)
-	// The zero time states that the expiry is not checked.
+	// The zero time states that the expiry is not checked, and version 1 that
+	// the version is not compared.
 	assert.JSONEq(t, `"0001-01-01T00:00:00Z"`, string(got.Signed["expires"]))
+	assert.JSONEq(t, `1`, string(got.Signed["version"]))
 	var targets map[string]map[string]any
 	require.NoError(t, json.Unmarshal(got.Signed["targets"], &targets))
 	assert.Equal(t, "https://data.example/repo/a.raw", targets["a.raw"]["x-quarry-override-url"])
 	assert.NotContains(t, targets[".quarry/sysupdate.d/a.transfer"], "x-quarry-override-url")
+}
+
+// An unsigned targets file depends only on its input, not on when it is
+// written, so a build that writes one is reproducible.
+func TestTargetsUnsignedReproducible(t *testing.T) {
+	dir := t.TempDir()
+	include := filepath.Join(dir, "include.json") //nolint:forbidigo // test code
+	doc := `{"signatures": [], "signed": {
+		"_type": "targets", "spec_version": "1.0.31", "version": 1, "expires": "0001-01-01T00:00:00Z",
+		"targets": {"a.raw": {"length": 1, "hashes": {"sha256": "` + strings.Repeat("a", 64) + `"}}}}}`
+	require.NoError(t, os.WriteFile(include, []byte(doc), 0o644)) //nolint:forbidigo // test code
+
+	write := func(name string) []byte {
+		out := filepath.Join(dir, name) //nolint:forbidigo // test code
+		require.NoError(t, targetsCommand.Run(t.Context(), []string{
+			"targets", "--unsigned", "--include-from", include, "--output", out,
+		}))
+		data, err := os.ReadFile(out) //nolint:forbidigo // test code
+		require.NoError(t, err)
+		return data
+	}
+	first := write("first.json")
+	// A version from the wall-clock time counts milliseconds.
+	time.Sleep(2 * time.Millisecond)
+	assert.Equal(t, string(first), string(write("second.json")))
 }

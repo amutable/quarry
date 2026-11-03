@@ -429,7 +429,7 @@ var targetsCommand = withKeystoreFlagUnless(&cli.Command{
 				{
 					&cli.BoolFlag{
 						Name:  "unsigned",
-						Usage: "write the targets file without signatures and, unless --expire-after is set, with the zero time as its expiry, for a consumer that signs it itself (needs no --keystore)",
+						Usage: "write the targets file without signatures, with version 1 and, unless --expire-after is set, with the zero time as its expiry, for a consumer that signs it itself (needs no --keystore)",
 					},
 				},
 			},
@@ -593,10 +593,17 @@ var targetsCommand = withKeystoreFlagUnless(&cli.Command{
 		if err != nil {
 			return fmt.Errorf("failed to sign targets data: %w", err)
 		}
-		// Nothing verifies an unsigned file, so nothing checks its expiry
-		// either. The zero time says so, unless --expire-after asks for one.
-		if cmd.Bool("unsigned") && !cmd.IsSet("expire-after") {
-			signed.Signed.Expires = time.Time{}
+		if cmd.Bool("unsigned") {
+			// Nothing verifies an unsigned file, so nothing checks its expiry
+			// either. The zero time says so, unless --expire-after asks for one.
+			if !cmd.IsSet("expire-after") {
+				signed.Signed.Expires = time.Time{}
+			}
+			// Nothing compares its version either: a repository that imports
+			// it with --include-from takes its targets and versions them
+			// itself. The lowest version TUF allows says so, and unlike the
+			// wall-clock time it makes the same input give the same file.
+			signed.Signed.Version = 1
 		}
 		payload, err := cjson.EncodeCanonical(signed)
 		if err != nil {
