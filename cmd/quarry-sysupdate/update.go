@@ -102,6 +102,20 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 		// the extension application, clean up the successfully installed
 		// components, and force-downgrade to the old versions.
 
+		// A refreshed confext may ship machine-tags.d(5) files, and features gated on
+		// those tags were evaluated against the old tags. Loop until the tags
+		// settle.
+		// TODO: The real signal to stop looping is whether the set of
+		// installable features stopped changing (rather than the tags), but
+		// there isn't a really nice way for us to detect that so we use tags
+		// as a proxy. In future, sysupdate will handle the loop for us (and
+		// thus be responsible for this detection) so this can all be removed
+		// then.
+		tags, err := hostnamed.CurrentTags(ctx, "")
+		if err != nil {
+			return fmt.Errorf("fetch machine tags before update: %w", err)
+		}
+
 		// Pick up tags the user set by hand, not only ones a confext ships.
 		if err := enableSuggested(ctx); err != nil {
 			return err
@@ -114,19 +128,6 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 			return fmt.Errorf("post-update extension cleanup: %w", err)
 		}
 
-		// A refreshed confext may ship tags.d(5) files, and features gated on
-		// those tags were evaluated against the old tags. Loop until the tags
-		// settle.
-		// TODO: The real signal to stop looping is whether the set of
-		// installable features stopped changing (rather than the tags), but
-		// there isn't a really nice way for us to detect that so we use tags
-		// as a proxy. In future, sysupdate will handle the loop for us (and
-		// thus be responsible for this detection) so this can all be removed
-		// then.
-		tags, err := hostnamed.CurrentTags(ctx, "")
-		if err != nil {
-			return fmt.Errorf("fetch machine tags before refresh: %w", err)
-		}
 		for iteration := 1; ; iteration++ {
 			// Do online-reload of sysexts and confexts.
 			slog.Info("Trigger online-reload of new components.")
