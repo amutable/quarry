@@ -184,6 +184,25 @@ func TestNewClient_SkipsInvalidRemoteRoot(t *testing.T) {
 	require.ErrorContains(t, err, "root_trust root.json is invalid JSON")
 }
 
+// A remote root_trust fetch that fails for any reason but a 404 (here, the
+// server refusing the client) is fatal for NewClient: only a missing
+// repository may be skipped.
+func TestNewClient_RemoteRootFetchErrorFatal(t *testing.T) {
+	valid, denied := testrepo.New(t), testrepo.NewBroken(t)
+	denied.Handle("/1.root.json", http.HandlerFunc(func(wtr http.ResponseWriter, _ *http.Request) {
+		wtr.WriteHeader(http.StatusUnauthorized)
+	}))
+	cfg := testrepo.Config(t,
+		valid.ConfigBlock("valid-repo"),
+		denied.ConfigBlock("denied-repo"),
+	)
+
+	_, err := tufclient.NewClient(t.Context(), cfg)
+	require.NotErrorIs(t, err, tufclient.ErrSkippableRepo)
+	require.ErrorContains(t, err, "bad repo denied-repo")
+	require.ErrorContains(t, err, "status code 401")
+}
+
 // A repository with a non-remote root_trust source that fails to load is a
 // fatal error for NewClient, never a skippable one -- local sources are meant
 // to always exist and be valid.
