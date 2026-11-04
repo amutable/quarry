@@ -90,7 +90,7 @@ var app = cliext.WithRefTimeFlag(&cli.Command{
 		keystoreDriversCommand,
 		repoctlCommand,
 	},
-})
+}, cliext.WithSourceDateEpoch())
 
 func Main(args []string) error {
 	return app.Run(context.Background(), args)
