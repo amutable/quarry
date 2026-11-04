@@ -32,6 +32,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"go.amutable.dev/quarry/internal/third_party/funchelpers"
+	"go.amutable.dev/quarry/internal/tufclient"
 	"go.amutable.dev/quarry/internal/tufext"
 	"go.amutable.dev/quarry/internal/xsysupdate"
 )
@@ -220,6 +221,18 @@ func proxyTargetFile(rw http.ResponseWriter, req *http.Request) (Err error) {
 		return nil
 	}
 
+	// If we need a custom client for pulling data from the repository (such as
+	// there being an authentication scheme) then we cannot just provide
+	// sd-pull a redirect because it will not be able to pull from the source.
+	// So we have no choice but to stream the data here.
+	//
+	// TODO: Once we have support for UAPI.16 in systemd-sysupdate we will be
+	// able to provide custom headers to sd-pull and remove the need for this
+	// streaming ugliness.
+	if info.Repo.Client != nil {
+		return streamTargetFile(rw, req, info)
+	}
+
 	// Redirect to the first target URL.
 	// TODO(uapi16): Once we get UAPI.16 support into systemd, we can serve a
 	// manifest that lists every URL candidate as an alternative contents source
@@ -250,6 +263,39 @@ func proxyTargetFile(rw http.ResponseWriter, req *http.Request) (Err error) {
 		return nil
 	}
 	return errors.New("no fetch urls defined for target")
+}
+
+// streamTargetFile streams the target file to the client. Because this is done
+// in a lossy way (we cannot return an error after data has been sent in HTTP)
+// some information is lost and we have to rely on the client to check
+// Content-Length and Content-Digest.
+func streamTargetFile(rw http.ResponseWriter, req *http.Request, info *tufclient.TargetInfo) error {
+	ctx := req.Context()
+
+	rdr, err := info.Fetch(ctx)
+	if errors.Is(err, fs.ErrNotExist) {
+		http.NotFound(rw, req)
+		return nil
+	}
+	// TODO: We should have info.Fetch provide more error information so we can
+	// mirror it here properly.
+	if err != nil {
+		return fmt.Errorf("fetch target %s from repo %s: %w", info.Path, info.Repo.Name, err)
+	}
+
+	rw.Header().Set("Content-Length", strconv.FormatInt(info.Length, 10))
+	rw.Header().Set("Content-Type", "application/octet-stream")
+	if digestValue := hashesToContentDigest(info.Hashes); digestValue != "" {
+		rw.Header().Set("Content-Digest", digestValue)
+		rw.Header().Set("Repr-Digest", digestValue)
+	}
+	_, copyErr := io.Copy(rw, rdr)
+	if err := errors.Join(copyErr, rdr.Close()); err != nil {
+		slog.ErrorContext(ctx, "Aborting target response",
+			"repo", info.Repo.Name, "target", info.Path, "err", err.Error())
+		panic(http.ErrAbortHandler)
+	}
+	return nil
 }
 
 // newSysupdateHandler returns a [http.Handler] that impements our sysupdate

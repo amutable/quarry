@@ -9,12 +9,15 @@ require (
 	cyphar.com/go-pathrs v0.2.6
 	github.com/BurntSushi/toml v1.6.0
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/go-jose/go-jose/v4 v4.1.7
+	github.com/go4org/hashtriemap v0.0.0-20260925222741-44e5305f85d9
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/handlers v1.5.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/umoci v0.6.0
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
+	github.com/shogo82148/go-sfv v0.3.6
 	github.com/stretchr/testify v1.12.1
 	github.com/theupdateframework/go-tuf/v2 v2.4.1
 	github.com/tiendc/go-deepcopy v1.7.2

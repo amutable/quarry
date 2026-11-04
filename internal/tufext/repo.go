@@ -5,6 +5,7 @@ package tufext
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 )
 
@@ -45,6 +46,19 @@ type Repository struct {
 	// function. A nil function means all targets are allowed, to avoid nil
 	// panics use [Repository.IsTargetPermitted].
 	IsTargetPermittedFn func(targetPath string) bool
+
+	// Client is the HTTP client used to fetch this repository's files. Users
+	// should prefer [Repository.HTTPClient], which handles the default when
+	// this is nil.
+	Client *http.Client
+}
+
+// HTTPClient returns the client to fetch this repository's files with.
+func (repo *Repository) HTTPClient() *http.Client {
+	if repo.Client == nil {
+		return http.DefaultClient
+	}
+	return repo.Client
 }
 
 // IsTargetPermitted indicates whether the given target path is permitted to be

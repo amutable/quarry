@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -179,6 +180,22 @@ type Repository struct {
 	// DataRootURL is the base URL for the directory containing target data
 	// files. If unset, the default is derived by [tufext.Repository.DataURL].
 	DataRootURL *tomlURL `toml:"data_root_url"`
+
+	// Auth says how requests for the repository's files authenticate. Nil
+	// means no authentication.
+	Auth *tomlRepoAuth `toml:"auth"`
+
+	// httpClient is shared by every config that authenticates as the same
+	// identity with the same WIMSE audience (see [wimseagent.Client]).
+	httpClient *http.Client
+}
+
+// HTTPClient returns the client to fetch this repository's files with.
+func (repo Repository) HTTPClient() *http.Client {
+	if repo.httpClient == nil {
+		return http.DefaultClient
+	}
+	return repo.httpClient
 }
 
 const defaultOrderIndex = 100
@@ -201,6 +218,7 @@ func (repo Repository) AsRepository() *tufext.Repository {
 	extRepo := &tufext.Repository{
 		Name:      repo.Name,
 		RootTrust: repo.RootTrust.RootTrustSource,
+		Client:    repo.httpClient,
 	}
 	if u := repo.MetaRootURL; u != nil {
 		extRepo.MetaRootURL = generics.Ptr(u.URL)
@@ -355,6 +373,14 @@ func (cfg *Config) expandAndValidate() error {
 		); err != nil {
 			return fmt.Errorf("repository %s has invalid default url: %w", repo.Name, err)
 		}
+
+		if repo.Auth != nil {
+			client, err := repo.Auth.httpClient()
+			if err != nil {
+				return fmt.Errorf("repository %s has invalid auth: %w", repo.Name, err)
+			}
+			repo.httpClient = client
+		}
 	}
 	return nil
 }
@@ -398,6 +424,9 @@ func (cfg *Config) merge(fragment *Config) error {
 		}
 		old.MetaRootURL = mergeURL(old.MetaRootURL, repo.MetaRootURL)
 		old.DataRootURL = mergeURL(old.DataRootURL, repo.DataRootURL)
+		if repo.Auth != nil {
+			old.Auth = repo.Auth
+		}
 	}
 	return nil
 }

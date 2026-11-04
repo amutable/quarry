@@ -54,7 +54,7 @@ func TestVerifiedHTTPGet_HappyPath(t *testing.T) {
 	u := staticServer(t, http.StatusOK, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(body)}
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, http.StatusOK, res.StatusCode)
@@ -73,7 +73,7 @@ func TestVerifiedHTTPGet_MultipleHashes_AllValid(t *testing.T) {
 		"sha512": sha512Of(body),
 	}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 
 	// Layer order is an implementation detail of HashesToDigest; only the set
@@ -108,7 +108,7 @@ func TestVerifiedHTTPGet_MultipleHashes_OneWrong(t *testing.T) {
 		"sha512": make([]byte, sha512.Size),
 	}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 	_, err = io.ReadAll(rdr)
 	err = errOrClose(err, rdr)
@@ -122,7 +122,7 @@ func TestVerifiedHTTPGet_DigestMismatch(t *testing.T) {
 	require.Len(t, wrong, len(body), "test setup: lengths must match to isolate digest mismatch")
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(wrong)}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 	_, err = io.ReadAll(rdr)
 	err = errOrClose(err, rdr)
@@ -134,7 +134,7 @@ func TestVerifiedHTTPGet_ShortBody(t *testing.T) {
 	u := staticServer(t, http.StatusOK, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(body)}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body))+10, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body))+10, hashes)
 	require.NoError(t, err)
 
 	got, readErr := io.ReadAll(rdr)
@@ -151,7 +151,7 @@ func TestVerifiedHTTPGet_LongBody(t *testing.T) {
 	// (digest-mismatch takes precedence in verify()).
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(body[:declared])}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, declared, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, declared, hashes)
 	require.NoError(t, err)
 	got, readErr := io.ReadAll(rdr)
 	assert.Equal(t, body[:declared], got, "read should be truncated to declared length")
@@ -164,7 +164,7 @@ func TestVerifiedHTTPGet_ZeroLengthEmptyBody(t *testing.T) {
 	u := staticServer(t, http.StatusOK, nil)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.NoError(t, err)
 	got, err := io.ReadAll(rdr)
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestVerifiedHTTPGet_ZeroLengthNonEmptyBody(t *testing.T) {
 	// isn't masked by digest-mismatch.
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.NoError(t, err)
 	_, err = io.ReadAll(rdr)
 	err = errOrClose(err, rdr)
@@ -193,7 +193,7 @@ func TestVerifiedHTTPGet_NegativeLength(t *testing.T) {
 
 	// The wrapper does not validate length itself; VerifiedReadCloser surfaces
 	// ErrInvalidExpectedSize on the first Read/Close.
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, -1, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, -1, hashes)
 	require.NoError(t, err)
 	_, err = io.ReadAll(rdr)
 	err = errOrClose(err, rdr)
@@ -203,7 +203,7 @@ func TestVerifiedHTTPGet_NegativeLength(t *testing.T) {
 func TestVerifiedHTTPGet_EmptyHashes(t *testing.T) {
 	u := staticServer(t, http.StatusOK, []byte("anything"))
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, tufmetadata.Hashes{})
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, tufmetadata.Hashes{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, tufext.ErrNoSupportedHashTypes) //nolint:testifylint // assert is fine for error path checks
 	assert.Nil(t, rdr)
@@ -214,7 +214,7 @@ func TestVerifiedHTTPGet_OnlyUnsupportedHash(t *testing.T) {
 	u := staticServer(t, http.StatusOK, []byte("anything"))
 	hashes := tufmetadata.Hashes{"md5": []byte("does-not-matter")}
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, tufext.ErrNoSupportedHashTypes) //nolint:testifylint // assert is fine for error path checks
 	assert.Nil(t, rdr)
@@ -229,7 +229,7 @@ func TestVerifiedHTTPGet_UnsupportedHashIgnoredAlongsideSupported(t *testing.T) 
 		"md5":    []byte("unsupported, should be ignored"),
 	}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 	got, err := io.ReadAll(rdr)
 	require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestVerifiedHTTPGet_NotFound(t *testing.T) {
 	u := staticServer(t, http.StatusNotFound, []byte("not here"))
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, fs.ErrNotExist) //nolint:testifylint // assert is fine for error path checks
 	assert.Nil(t, rdr)
@@ -253,7 +253,7 @@ func TestVerifiedHTTPGet_InternalServerError(t *testing.T) {
 	u := staticServer(t, http.StatusInternalServerError, []byte("boom"))
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, fs.ErrNotExist, "non-404 status must not masquerade as ENOENT") //nolint:testifylint // assert is fine for error path checks
 	assert.Contains(t, err.Error(), "500")
@@ -268,7 +268,7 @@ func TestVerifiedHTTPGet_ContextCancelledBeforeRequest(t *testing.T) {
 	cancel()
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	rdr, _, err := httputils.VerifiedHTTPGet(ctx, u, 0, hashes)
+	rdr, _, err := httputils.VerifiedHTTPGet(ctx, http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled) //nolint:testifylint // assert is fine for error path checks
 	assert.Nil(t, rdr)
@@ -279,7 +279,7 @@ func TestVerifiedHTTPGet_ResponseBodyEqualsReturnedReader(t *testing.T) {
 	u := staticServer(t, http.StatusOK, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(body)}
 
-	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), u, int64(len(body)), hashes)
+	rdr, res, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, int64(len(body)), hashes)
 	require.NoError(t, err)
 	assert.Same(t, rdr, res.Body, "res.Body must point at the verified reader, not the raw transport stream")
 	require.NoError(t, rdr.Close())
@@ -290,7 +290,7 @@ func TestVerifiedHTTPGet_ErrorBodyCaptured(t *testing.T) {
 	u := staticServer(t, http.StatusInternalServerError, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server response:",
 		"error must label the captured response body so operators can spot it")
@@ -305,7 +305,7 @@ func TestVerifiedHTTPGet_ErrorBodyTruncatedAtMaxBytes(t *testing.T) {
 	u := staticServer(t, http.StatusBadGateway, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "AAAA",
 		"a sample of the captured prefix must appear so we know capture happened, not just that the tail was dropped")
@@ -321,7 +321,7 @@ func TestVerifiedHTTPGet_ErrorBodyQuotedNoRawControlBytes(t *testing.T) {
 	u := staticServer(t, http.StatusBadRequest, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	msg := err.Error()
 	assert.NotContains(t, msg, "\x1b", "raw escape byte must not leak into the error")
@@ -334,7 +334,7 @@ func TestVerifiedHTTPGet_ErrorBodyEmpty(t *testing.T) {
 	u := staticServer(t, http.StatusInternalServerError, nil)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server response empty",
 		"an empty error body should be reported as such rather than as a read failure")
@@ -369,7 +369,7 @@ func TestVerifiedHTTPGet_ErrorBodySlowRollReturnsWithBufferedPrefixOnly(t *testi
 	require.NoError(t, err)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err = httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err = httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "EARLY-CHUNK",
 		"the prefix buffered before the server parked must be captured")
@@ -396,7 +396,7 @@ func TestVerifiedHTTPGet_ErrorBodyDeadlineFiresOnHangingServer(t *testing.T) {
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
 	start := time.Now()
-	_, _, err = httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err = httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -415,7 +415,7 @@ func TestVerifiedHTTPGet_NotFoundIncludesBody(t *testing.T) {
 	u := staticServer(t, http.StatusNotFound, body)
 	hashes := tufmetadata.Hashes{"sha256": sha256Of(nil)}
 
-	_, _, err := httputils.VerifiedHTTPGet(t.Context(), u, 0, hashes)
+	_, _, err := httputils.VerifiedHTTPGet(t.Context(), http.DefaultClient, u, 0, hashes)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, fs.ErrNotExist) //nolint:testifylint // assert is fine for error path checks
 	assert.Contains(t, err.Error(), "artifact 'sha256:cafe' absent",
