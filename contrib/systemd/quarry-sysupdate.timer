@@ -11,21 +11,10 @@ Description=Quarry-Based Automatic System Update
 ConditionVirtualization=!container
 
 [Timer]
-Persistent=yes
-# To make update provisioning more responsive, trigger updates on a minimum
-# 2-minute interval (and 1 minute after boot). For large update payloads (like
-# installing k8s) the update might take a while so we add a minimum 2 minute
-# trigger from the unit start and end to make sure we never wait more than 2
-# minutes.
-#
-# FIXME: This is a workaround for ACP not being able to trigger updates via
-# the "kickd" backchannel at the moment, in future this should probably be
-# bumped higher? Or maybe we should still do this if the machine has no
-# backchannel with the ACP? For obvious reasons this will probably not scale.
 OnBootSec=1min
-OnUnitActiveSec=2min
-OnUnitInactiveSec=2min
-RandomizedDelaySec=20sec
+OnUnitActiveSec=8h
+# RandomizedDelay is applied to both options above
+RandomizedDelaySec=30min
 
 [Install]
 WantedBy=timers.target
