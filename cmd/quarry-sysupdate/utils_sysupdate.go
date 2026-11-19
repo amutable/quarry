@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 
 	"go.amutable.dev/quarry/internal/jsonutils"
 	"go.amutable.dev/quarry/internal/systemdcmd"
@@ -28,15 +29,42 @@ func listComponents(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("get list of sysupdate components (%s): %w", cmd, err)
 	}
 
-	type outputType struct {
-		Default    bool     `json:"default"`
-		Components []string `json:"components"`
-	}
-	out, err := jsonutils.Parse[outputType](data)
+	components, err := parseComponents(data)
 	if err != nil {
 		return nil, fmt.Errorf("(%s) produced invalid json: %w", cmd, err)
 	}
-	components := out.Components
+	return components, nil
+}
+
+// parseComponents returns the components to update from the output of
+// "systemd-sysupdate --json=short components".
+func parseComponents(data []byte) ([]string, error) {
+	type outputType struct {
+		Default    bool     `json:"default"`
+		Components []string `json:"components"`
+		Details    []struct {
+			Name    string `json:"name"`
+			Enabled *bool  `json:"enabled,omitzero"`
+		} `json:"details"`
+	}
+	out, err := jsonutils.Parse[outputType](data)
+	if err != nil {
+		return nil, err
+	}
+	// "systemd-sysupdate update" fails for disabled components so we need to
+	// strip those out.
+	disabled := make(map[string]bool, len(out.Components))
+	for _, detail := range out.Details {
+		if detail.Enabled != nil && !*detail.Enabled {
+			disabled[detail.Name] = true
+		}
+	}
+	components := slices.DeleteFunc(out.Components, func(component string) bool {
+		if disabled[component] {
+			slog.Info("Skipping disabled sysupdate component.", "component", component)
+		}
+		return disabled[component]
+	})
 	if out.Default {
 		components = append(components, defaultComponent)
 	}
