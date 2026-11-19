@@ -655,3 +655,59 @@ func TestClose_Idempotent(t *testing.T) {
 	require.NoError(t, ext.Close())
 	require.NoError(t, ext.Close())
 }
+
+// systemd-sysupdate reads a component's definition from
+// sysupdate.<component>.component next to the component directory, not from
+// inside it.
+func TestLinkTransfers_LinksComponentFile(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+	ext := initExt(ctx, t)
+
+	env.populateUpdateDir(t, fixedNewDirSubpath, map[string][]byte{
+		"sysupdate.comp.d/comp.component": []byte("[Component]\nEnabled=false\n"),
+		"sysupdate.comp.d/comp.transfer":  []byte("transfer"),
+		// Not named after its component, so not its definition.
+		"sysupdate.other.d/comp.component": []byte("[Component]\n"),
+		"sysupdate.other.d/other.transfer": []byte("transfer"),
+	})
+
+	require.NoError(t, ext.linkTransfers(fixedNewDirSubpath))
+
+	link := filepath.Join(env.etcPath, "sysupdate.comp.component") //nolint:forbidigo // test code
+	target, err := os.Readlink(link)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.d", "comp.component"), target) //nolint:forbidigo // test code
+	data, err := os.ReadFile(link)                                                                                 //nolint:forbidigo // test code
+	require.NoError(t, err)
+	assert.Equal(t, "[Component]\nEnabled=false\n", string(data))
+
+	_, err = os.Lstat(filepath.Join(env.etcPath, "sysupdate.other.component")) //nolint:forbidigo // test code
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestUnlinkTransfers_RemovesQuarryComponentFile(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+	ext := initExt(ctx, t)
+
+	env.populateUpdateDir(t, fixedNewDirSubpath, map[string][]byte{
+		"sysupdate.comp.d/comp.component": []byte("[Component]\n"),
+	})
+	require.NoError(t, ext.linkTransfers(fixedNewDirSubpath))
+	// The sysadmin's own definition and the drop-in directory that
+	// "systemd-sysupdate enable-component" writes to have to stay.
+	own := filepath.Join(env.etcPath, "sysupdate.own.component")          //nolint:forbidigo // test code
+	require.NoError(t, os.WriteFile(own, []byte("[Component]\n"), 0o644)) //nolint:forbidigo // test code
+	dropins := filepath.Join(env.etcPath, "sysupdate.comp.component.d")   //nolint:forbidigo // test code
+	require.NoError(t, os.MkdirAll(dropins, 0o755))                       //nolint:forbidigo // test code
+
+	require.NoError(t, ext.unlinkTransfers())
+
+	_, err := os.Lstat(filepath.Join(env.etcPath, "sysupdate.comp.component")) //nolint:forbidigo // test code
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = os.Lstat(filepath.Join(env.etcPath, "sysupdate.comp.d")) //nolint:forbidigo // test code
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = os.Stat(own)
+	require.NoError(t, err)
+	_, err = os.Stat(dropins)
+	require.NoError(t, err)
+}

@@ -23,6 +23,7 @@ import (
 	"go.amutable.dev/quarry/internal/ctxext"
 	"go.amutable.dev/quarry/internal/pathrsext"
 	"go.amutable.dev/quarry/internal/third_party/funchelpers"
+	"go.amutable.dev/quarry/internal/transferlayout"
 	"go.amutable.dev/quarry/internal/tufclient"
 )
 
@@ -62,6 +63,15 @@ var transferInstallPatterns = [...]string{
 	"sysupdate.d/*", // base system sysupdate files
 }
 
+// componentFileLinkPattern is a glob that matches the symlinks in /etc to the
+// definition files of the components.
+//
+// A repository ships "<component>.component" inside the component directory,
+// but systemd-sysupdate reads it from "sysupdate.<component>.component" next
+// to that directory, see sysupdate.components(5). Without the link the
+// Enabled= and SuggestOn*= settings of a component are never applied.
+const componentFileLinkPattern = "sysupdate.*.component"
+
 // TransferFileExtension is an [Extension] that implements auto-installation of
 // target files from Quarry repositories.
 type TransferFileExtension struct {
@@ -91,7 +101,7 @@ func (ext *TransferFileExtension) Name() string { return "transfers" }
 
 func (ext *TransferFileExtension) unlinkTransfers() error {
 	storeDirPrefix := ext.storeDir.IntoFile().Name() + "/"
-	for _, pattern := range transferInstallPatterns {
+	for _, pattern := range append(transferInstallPatterns[:], componentFileLinkPattern) {
 		pattern = filepath.Join(transferInstallDir, pattern) //nolint:forbidigo // host-controlled directory
 		matches, err := filepath.Glob(pattern)               //nolint:forbidigo // host-controlled directory
 		if err != nil {
@@ -155,8 +165,34 @@ func (ext *TransferFileExtension) linkTransfers(subdir string) error {
 			}
 			slog.Info("[xsysupdate transfers] Linked auto-enable transfer.",
 				"transfer", match, "link", linkname)
+			if err := linkComponentFile(match); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
+}
+
+// linkComponentFile links the definition file of the component directory dir
+// to where systemd-sysupdate reads it, see [componentFileLinkPattern]. It does
+// nothing if dir is not a component directory or ships no definition file.
+func linkComponentFile(dir string) error {
+	component, err := transferlayout.ParseComponentDir(filepath.Base(dir)) //nolint:forbidigo // lexical name of a glob match
+	if err != nil || component == "" {
+		return nil //nolint:nilerr // not a component directory
+	}
+	componentFile := filepath.Join(dir, component+".component") //nolint:forbidigo // TODO: Implement pathrsext.Glob.
+	if _, err := os.Lstat(componentFile); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("check component file %s: %w", componentFile, err)
+	}
+	linkname := filepath.Join(transferInstallDir, "sysupdate."+component+".component") //nolint:forbidigo // restricted lexical pathname in host-controlled directory
+	if err := os.Symlink(componentFile, linkname); err != nil {                        //nolint:forbidigo // host-controlled directory
+		return fmt.Errorf("link component file %s: %w", componentFile, err)
+	}
+	slog.Info("[xsysupdate transfers] Linked component file.",
+		"component", componentFile, "link", linkname)
 	return nil
 }
 
