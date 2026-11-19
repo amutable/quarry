@@ -28,15 +28,44 @@ func listComponents(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("get list of sysupdate components (%s): %w", cmd, err)
 	}
 
-	type outputType struct {
-		Default    bool     `json:"default"`
-		Components []string `json:"components"`
-	}
-	out, err := jsonutils.Parse[outputType](data)
+	components, err := parseComponents(data)
 	if err != nil {
 		return nil, fmt.Errorf("(%s) produced invalid json: %w", cmd, err)
 	}
-	components := out.Components
+	return components, nil
+}
+
+// parseComponents returns the components to update from the output of
+// "systemd-sysupdate --json=short components".
+func parseComponents(data []byte) ([]string, error) {
+	type outputType struct {
+		Default    bool     `json:"default"`
+		Components []string `json:"components"`
+		Details    []struct {
+			Name    string `json:"name"`
+			Enabled *bool  `json:"enabled"`
+		} `json:"details"`
+	}
+	out, err := jsonutils.Parse[outputType](data)
+	if err != nil {
+		return nil, err
+	}
+	// "systemd-sysupdate update" fails for a disabled component, and one that
+	// is gated on a machine tag stays disabled on every machine without it.
+	disabled := map[string]bool{}
+	for _, detail := range out.Details {
+		if detail.Enabled != nil && !*detail.Enabled {
+			disabled[detail.Name] = true
+		}
+	}
+	components := make([]string, 0, len(out.Components)+1)
+	for _, component := range out.Components {
+		if disabled[component] {
+			slog.Info("Skipping disabled sysupdate component.", "component", component)
+			continue
+		}
+		components = append(components, component)
+	}
 	if out.Default {
 		components = append(components, defaultComponent)
 	}
