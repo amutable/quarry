@@ -5,6 +5,7 @@ package sysupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -24,10 +25,11 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 	Name:  "update",
 	Usage: "extended 'systemd-sysupdate update' wrapper",
 	Action: func(ctx context.Context, _ *cli.Command) (Err error) {
+		transfersExt := &xsysupdate.TransferFileExtension{
+			OverrideSourcePathURL: ctxQuarryProxyURL(ctx),
+		}
 		exts := xsysupdate.ExtensionSet{
-			&xsysupdate.TransferFileExtension{
-				OverrideSourcePathURL: ctxQuarryProxyURL(ctx),
-			},
+			transfersExt,
 		}
 		ctx, err := exts.DoInit(ctx)
 		if err != nil {
@@ -35,6 +37,26 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 		}
 		slog.Info("Initialised extensions.",
 			"extensions", exts.String())
+		// A failure before the components are updated leaves nothing
+		// installed, so the extensions are aborted (removing the staging
+		// directory). Afterwards the state is kept (see the FIXME below) and
+		// the extensions are only closed.
+		updating, closed := false, false
+		defer func() {
+			switch {
+			case Err == nil || closed:
+			case !updating:
+				// A failed Do* call has aborted already, and aborting again
+				// does nothing.
+				if err := exts.DoAbort(context.WithoutCancel(ctx), Err); err != nil {
+					Err = errors.Join(Err, fmt.Errorf("abort extensions: %w", err))
+				}
+			default:
+				if err := exts.Close(); err != nil {
+					Err = errors.Join(Err, fmt.Errorf("post-update extension cleanup: %w", err))
+				}
+			}
+		}()
 		// Legacy-prefixed targets are only applied after all other targets so
 		// we can allow them to be overridden by the non-legacy prefix.
 		// TODO: Drop this.
@@ -95,40 +117,36 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 		// FIXME FIXME FIXME
 		//
 		// If these updates error out we are kind of in a messy position.
-		// Because we need to call sysupdate multiple times to update each
-		// component, it is possible that one component installation fails. We
+		// sysupdate updates the components one after the other, so one
+		// component installation can fail after another succeeded. We
 		// would ideally never want to allow execution with mixed repo states,
 		// but fixing this requires having logic for cleanup so we can abort
 		// the extension application, clean up the successfully installed
 		// components, and force-downgrade to the old versions.
 
-		// A refreshed confext may ship machine-tags.d(5) files, and features gated on
-		// those tags were evaluated against the old tags. Loop until the tags
-		// settle.
+		// The machine tags decide which components and features are enabled
+		// while staging the definitions, because sysupdate does not enable
+		// suggested ones by itself (see xsysupdate.TransferFileExtension.Stage).
+		tags, err := hostnamed.CurrentTags(ctx, "")
+		if err != nil {
+			return fmt.Errorf("fetch machine tags before update: %w", err)
+		}
+
+		// A refreshed confext may ship machine-tags.d(5) files, and features gated
+		// on those tags were staged with the old tags. Loop until the tags
+		// settle, staging the definitions again with the new tags for each pass.
 		// TODO: The real signal to stop looping is whether the set of
 		// installable features stopped changing (rather than the tags), but
 		// there isn't a really nice way for us to detect that so we use tags
 		// as a proxy. In future, sysupdate will handle the loop for us (and
 		// thus be responsible for this detection) so this can all be removed
 		// then.
-		tags, err := hostnamed.CurrentTags(ctx, "")
-		if err != nil {
-			return fmt.Errorf("fetch machine tags before update: %w", err)
-		}
-
-		// Pick up tags the user set by hand, not only ones a confext ships.
-		if err := enableSuggested(ctx); err != nil {
-			return err
-		}
-		if err := sysupdateAll(ctx); err != nil {
-			return err
-		}
-
-		if err := exts.Close(); err != nil {
-			return fmt.Errorf("post-update extension cleanup: %w", err)
-		}
-
+		updating = true
 		for iteration := 1; ; iteration++ {
+			if err := stageAndUpdate(ctx, transfersExt, tags); err != nil {
+				return err
+			}
+
 			// Do online-reload of sysexts and confexts.
 			slog.Info("Trigger online-reload of new components.")
 			if err := sysupdateRefresh(ctx); err != nil {
@@ -140,22 +158,22 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 				return fmt.Errorf("fetch machine tags after refresh: %w", err)
 			}
 			if slices.Equal(tags, newTags) {
-				return nil
+				break
 			}
 			if iteration >= maxUpdateIterations {
 				slog.Warn("Maximum number of update iterations reached, not looking for further updates.",
 					"max", maxUpdateIterations, "before", tags, "after", newTags)
-				return nil
+				break
 			}
 			slog.Info("Machine tags changed by refresh, running another update pass.",
 				"iteration", iteration, "before", tags, "after", newTags)
 			tags = newTags
-			if err := enableSuggested(ctx); err != nil {
-				return err
-			}
-			if err := sysupdateAll(ctx); err != nil {
-				return err
-			}
 		}
+
+		closed = true
+		if err := exts.Close(); err != nil {
+			return fmt.Errorf("post-update extension cleanup: %w", err)
+		}
+		return nil
 	},
 })))
