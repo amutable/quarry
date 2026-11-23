@@ -115,8 +115,9 @@ const refreshMargin = 5 * time.Minute
 
 const vlInterface = "com.amutable.IdentityAgent"
 
-// DefaultSocketURI is the varlink URI of amutablectl's identity agent.
-const DefaultSocketURI = "unix:/run/amutable/" + vlInterface
+// DefaultSocketURI is the varlink URI of amutablectl's identity agent, via
+// its entry in the varlink registry.
+const DefaultSocketURI = "unix:/run/varlink/registry/" + vlInterface
 
 type witParams struct {
 	Audience  string          `json:"aud"`
