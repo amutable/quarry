@@ -48,7 +48,7 @@ var (
 	// directories, be writable, and be persistent across reboot.
 	//
 	// On AmutableOS, only /etc fits the bill.
-	transferInstallDir = "/etc" // .../sysupdate{.*,}.d/
+	transferInstallDir = "/etc" // .../sysupdate{.*,.d}
 	// extensionInstallDir is where sysext and confexts are linked by default
 	// using CurrentSymlink.
 	// FIXME: This is only needed for the systemd bug workaround in Init.
@@ -58,8 +58,12 @@ var (
 // transferInstallPatterns are a set of globs that will match the symlink names
 // in /etc and in /var/lib/quarry-sysupdate/xsysupdate/transfers/.
 var transferInstallPatterns = [...]string{
-	"sysupdate.*.d", // component sysupdate directories
-	"sysupdate.d/*", // base system sysupdate files
+	"sysupdate.d/*",         // base system transfer files
+	"sysupdate.*.component", // component definition files
+	// NOTE: This covers both component transfer files (sysupdate.foo.d) and
+	// component drop-in files (sysupdate.foo.component.d) as we cannot
+	// differentiate the two with a standard glob.
+	"sysupdate.*.d",
 }
 
 // TransferFileExtension is an [Extension] that implements auto-installation of

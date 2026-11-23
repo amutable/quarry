@@ -263,6 +263,41 @@ func TestUnlinkTransfers_RemovesQuarryComponentDir(t *testing.T) {
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
+// Covers the `sysupdate.*.component` glob (component definition files, which
+// live directly in /etc rather than in a sysupdate directory).
+func TestUnlinkTransfers_RemovesQuarryComponentFile(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+	ext := initExt(ctx, t)
+
+	target := filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.component") //nolint:forbidigo // test code
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))                          //nolint:forbidigo // test code
+	require.NoError(t, os.WriteFile(target, []byte("dummy"), 0o644))                      //nolint:forbidigo // test code
+	link := filepath.Join(env.etcPath, "sysupdate.comp.component")                        //nolint:forbidigo // test code
+	require.NoError(t, os.Symlink(target, link))                                          //nolint:forbidigo // test code
+
+	require.NoError(t, ext.unlinkTransfers())
+
+	_, err := os.Lstat(link)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// Component drop-in directories are matched by the `sysupdate.*.d` glob.
+func TestUnlinkTransfers_RemovesQuarryComponentDropInDir(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+	ext := initExt(ctx, t)
+
+	target := filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.component.d") //nolint:forbidigo // test code
+	require.NoError(t, os.MkdirAll(target, 0o755))                                          //nolint:forbidigo // test code
+	require.NoError(t, os.WriteFile(filepath.Join(target, "x.conf"), []byte("x"), 0o644))   //nolint:forbidigo // test code
+	link := filepath.Join(env.etcPath, "sysupdate.comp.component.d")                        //nolint:forbidigo // test code
+	require.NoError(t, os.Symlink(target, link))                                            //nolint:forbidigo // test code
+
+	require.NoError(t, ext.unlinkTransfers())
+
+	_, err := os.Lstat(link)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
 func TestUnlinkTransfers_SkipsNonSymlinks(t *testing.T) {
 	env, ctx := setupTestEnv(t)
 	ext := initExt(ctx, t)
@@ -297,10 +332,13 @@ func TestLinkTransfers_BaseAndComponent(t *testing.T) {
 	ext := initExt(ctx, t)
 
 	env.populateUpdateDir(t, fixedNewDirSubpath, map[string][]byte{
-		"sysupdate.d/base.transfer":       []byte("base"),
-		"sysupdate.comp.d/component.conf": []byte("component"),
+		"sysupdate.d/base.transfer":         []byte("base"),
+		"sysupdate.comp.d/component.conf":   []byte("component"),
+		"sysupdate.comp.component":          []byte("[Component]"),
+		"sysupdate.comp.component.d/x.conf": []byte("[Component]"),
 	})
 
+	// This also fails if the component drop-in directory is linked twice.
 	require.NoError(t, ext.linkTransfers(fixedNewDirSubpath))
 
 	baseLink := filepath.Join(env.etcPath, "sysupdate.d", "base.transfer") //nolint:forbidigo // test code
@@ -317,6 +355,22 @@ func TestLinkTransfers_BaseAndComponent(t *testing.T) {
 	target, err = os.Readlink(compLink)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.d"), target) //nolint:forbidigo // test code
+
+	// Component definition files are linked directly into /etc, not inside
+	// the component directory.
+	defLink := filepath.Join(env.etcPath, "sysupdate.comp.component") //nolint:forbidigo // test code
+	target, err = os.Readlink(defLink)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.component"), target) //nolint:forbidigo // test code
+	info, err := os.Stat(defLink)
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular())
+
+	// Component drop-in directories are symlinked as a whole as well.
+	dropInLink := filepath.Join(env.etcPath, "sysupdate.comp.component.d") //nolint:forbidigo // test code
+	target, err = os.Readlink(dropInLink)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.comp.component.d"), target) //nolint:forbidigo // test code
 }
 
 func TestLinkTransfers_CreatesSysupdateDirIfMissing(t *testing.T) {
