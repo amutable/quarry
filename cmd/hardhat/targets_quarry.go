@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -41,37 +39,30 @@ func quarryTargetsFlags() []cli.Flag {
 	}
 }
 
-// quarryTransferDir is one <component dir> of --quarry-transfer-dir with its
-// sources.
-type quarryTransferDir struct {
-	dir     string
-	sources []string
+// quarryTransferSource is one <component dir>=<source> of
+// --quarry-transfer-dir.
+type quarryTransferSource struct {
+	componentDir string
+	source       string
 }
 
 // quarrySpecFromFlags parses and checks the --quarry-* options.
-func quarrySpecFromFlags(cmd *cli.Command) ([]*quarryTransferDir, error) {
-	var dirs []*quarryTransferDir
-	byDir := map[string]*quarryTransferDir{}
+//
+// TODO: We should probably return a wrapping struct or something a bit more
+// generic so the caller's usage of [addQuarryTargets] makes more sense.
+func quarrySpecFromFlags(cmd *cli.Command) ([]quarryTransferSource, error) {
+	var sources []quarryTransferSource
 	for _, arg := range cmd.StringSlice("quarry-transfer-dir") {
-		dir, source, ok := strings.Cut(arg, "=")
+		componentDir, source, ok := strings.Cut(arg, "=")
 		if !ok || source == "" {
 			return nil, fmt.Errorf("--quarry-transfer-dir=%q must be <component dir>=<source>", arg)
 		}
-		if _, err := transferlayout.ParseComponentDir(dir); err != nil {
+		if _, err := transferlayout.ParseComponentDir(componentDir); err != nil {
 			return nil, fmt.Errorf("--quarry-transfer-dir=%q: %w", arg, err)
 		}
-		entry, ok := byDir[dir]
-		if !ok {
-			entry = &quarryTransferDir{dir: dir}
-			byDir[dir] = entry
-			dirs = append(dirs, entry)
-		}
-		if slices.Contains(entry.sources, source) {
-			return nil, fmt.Errorf("--quarry-transfer-dir=%q given twice", arg)
-		}
-		entry.sources = append(entry.sources, source)
+		sources = append(sources, quarryTransferSource{componentDir: componentDir, source: source})
 	}
-	return dirs, nil
+	return sources, nil
 }
 
 // confextSourcePrefix marks a --quarry-transfer-dir source that names a
@@ -81,6 +72,15 @@ const confextSourcePrefix = "confext:"
 // hasSpaceOrControl returns whether s would break a definition line.
 func hasSpaceOrControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+}
+
+// rejectConflict returns an error if the contents of the existing target at
+// targetPath differ from data.
+func rejectConflict(existing *tufmetadata.TargetFiles, targetPath string, data []byte) error {
+	if err := tufext.VerifyData(data, existing.Length, existing.Hashes); err != nil {
+		return fmt.Errorf("target %s is given twice with different contents: %w", targetPath, err)
+	}
+	return nil
 }
 
 // confextTransfer returns the transfer definition installing the confext DDI
@@ -109,23 +109,43 @@ InstancesMax=2
 `)
 }
 
-// readDefinitionSource adds the definition files of one source directory to
-// files, keyed by their path relative to it, or generates them for a confext
-// source. A file name that another source already added is an error.
-func readDefinitionSource(files map[string][]byte, source string) error {
-	add := func(rel string, data []byte) error {
-		if _, dup := files[rel]; dup {
-			return fmt.Errorf("%s: definition file %s is also in another source", source, rel)
-		}
-		files[rel] = data
-		return nil
+// addInlineTarget adds an inline target with the given target path. If there
+// is an existing entry with identical contents this is a no-op, but if the
+// contents are different then an error is returned.
+func addInlineTarget(builder *tufext.TargetsBuilder, targetPath string, data []byte) error {
+	existing, ok := builder.TargetsType().Targets[targetPath]
+	if !ok {
+		_, err := addInlineBytes(builder, targetPath, data)
+		return err
 	}
+	if err := rejectConflict(existing, targetPath, data); err != nil {
+		return err
+	}
+	// If there is already an existing entry, make sure we include inline data.
+	ext := tufext.TargetFilesExt(existing)
+	if inline, err := ext.InlineData(); err != nil {
+		return fmt.Errorf("target %s has invalid inline data: %w", targetPath, err)
+	} else if inline == nil {
+		ext.WithInlineData(data)
+	}
+	return nil
+}
+
+// addDefinitionSource adds the definition files of one source directory to the
+// targets under componentDir, keeping their path relative to the source, or
+// generates them for a confext source.
+func addDefinitionSource(builder *tufext.TargetsBuilder, componentDir, source string) error {
 	if name, ok := strings.CutPrefix(source, confextSourcePrefix); ok {
 		// systemd reads the confext name up to the first "_" of the file name.
 		if !transferlayout.ValidPathComponent(name) || strings.Contains(name, "_") || hasSpaceOrControl(name) {
 			return fmt.Errorf("invalid confext name %q in %s", name, source)
 		}
-		return add("50-"+name+".transfer", confextTransfer(name))
+		file := "50-" + name + ".transfer"
+		targetPath, err := transferlayout.TargetPath(componentDir, file)
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", componentDir, file, err)
+		}
+		return addInlineTarget(builder, targetPath, confextTransfer(name))
 	}
 	found := false
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error { //nolint:forbidigo // user-controlled host path
@@ -144,6 +164,9 @@ func readDefinitionSource(files map[string][]byte, source string) error {
 		if err != nil {
 			return err
 		}
+		// TODO: Ideally tufext.TargetsBuilder would auto-detect what sizes
+		// this inlining should happen at and we could then provide a reader
+		// instead?
 		if info.Size() > maxInlineSize {
 			return fmt.Errorf("definition file %s is too large (%d bytes) to be inlined (limit %d bytes)", path, info.Size(), maxInlineSize)
 		}
@@ -152,7 +175,14 @@ func readDefinitionSource(files map[string][]byte, source string) error {
 			return err
 		}
 		found = true
-		return add(rel, data)
+		targetPath, err := transferlayout.TargetPath(componentDir, rel)
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", componentDir, rel, err)
+		}
+		if err := addInlineTarget(builder, targetPath, data); err != nil {
+			return fmt.Errorf("%s: %w", source, err)
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -163,57 +193,34 @@ func readDefinitionSource(files map[string][]byte, source string) error {
 	return nil
 }
 
-// layoutTransferDir turns the sources of one transfer directory into its
-// files. For a named component, these include the generated component file
-// if no source ships one.
-func layoutTransferDir(entry *quarryTransferDir) (map[string][]byte, error) {
-	files := map[string][]byte{}
-	for _, source := range entry.sources {
-		if err := readDefinitionSource(files, source); err != nil {
-			return nil, err
-		}
-	}
-	// quarrySpecFromFlags already checked the directory name.
-	component, _ := transferlayout.ParseComponentDir(entry.dir)
-	if component == "" {
-		return files, nil
-	}
-	componentFile := component + ".component"
-	if _, shipped := files[componentFile]; !shipped {
-		files[componentFile] = transferlayout.ComponentFile(component)
-	}
-	return files, nil
-}
-
 // addQuarryTargets adds what the --quarry-* options ask for to the targets.
-func addQuarryTargets(builder *tufext.TargetsBuilder, dirs []*quarryTransferDir) error {
-	for _, entry := range dirs {
-		files, err := layoutTransferDir(entry)
-		if err != nil {
+// Every named component gets a generated <component>.component file if no
+// source ships one.
+func addQuarryTargets(builder *tufext.TargetsBuilder, sources []quarryTransferSource) error {
+	components := map[string]struct{}{}
+	for _, src := range sources {
+		if err := addDefinitionSource(builder, src.componentDir, src.source); err != nil {
 			return err
 		}
-		for _, rel := range slices.Sorted(maps.Keys(files)) {
-			path, err := transferlayout.TargetPath(entry.dir, rel)
-			if err != nil {
-				return fmt.Errorf("%s: %s: %w", entry.dir, rel, err)
-			}
-			if err := rejectExisting(builder, path); err != nil {
-				return err
-			}
-			if _, err := addInlineBytes(builder, path, files[rel]); err != nil {
-				return err
-			}
+		// quarrySpecFromFlags already checked the directory name.
+		component, _ := transferlayout.ParseComponentDir(src.componentDir)
+		if component != "" {
+			components[component] = struct{}{}
 		}
 	}
-	return nil
-}
-
-// rejectExisting returns an error if the targets already hold path. The
-// builder would otherwise silently replace the entry (a generated entry
-// colliding with a hashed or merged one).
-func rejectExisting(builder *tufext.TargetsBuilder, path string) error {
-	if _, dup := builder.TargetsType().Targets[path]; dup {
-		return fmt.Errorf("target %s is given twice", path)
+	for component := range components {
+		componentDir := transferlayout.ComponentDir(component)
+		componentFile := component + ".component"
+		componentPath, err := transferlayout.TargetPath(componentDir, componentFile)
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", componentDir, componentFile, err)
+		}
+		if _, ok := builder.TargetsType().Targets[componentPath]; ok {
+			continue
+		}
+		if err := addInlineTarget(builder, componentPath, transferlayout.ComponentFile(component)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

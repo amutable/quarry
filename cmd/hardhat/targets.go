@@ -460,7 +460,7 @@ var targetsCommand = withKeystoreFlagUnless(&cli.Command{
 
 		// This happens before creating --output so that bad options leave it
 		// alone.
-		quarry, err := quarrySpecFromFlags(cmd)
+		quarryTargets, err := quarrySpecFromFlags(cmd)
 		if err != nil {
 			return err
 		}
@@ -566,7 +566,7 @@ var targetsCommand = withKeystoreFlagUnless(&cli.Command{
 			}
 		}
 
-		if err := addQuarryTargets(builder, quarry); err != nil {
+		if err := addQuarryTargets(builder, quarryTargets); err != nil {
 			return err
 		}
 
