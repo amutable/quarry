@@ -89,7 +89,14 @@ func RepoClient(ctx context.Context, cacheDir *pathrs.Root, repoLike tufext.Repo
 		// Fallback to fetch from the trusted root source.
 		rootData, err := repo.RootTrust.FetchRoot(ctx, repo)
 		if err != nil {
-			return nil, skippableErr(fmt.Errorf("fetch trusted root.json: %w", err))
+			err = fmt.Errorf("fetch trusted root.json: %w", err)
+			// Only a missing root.json means the repository may not exist
+			// yet. Any other failure (auth, network, server error) must not
+			// look like an empty repository list.
+			if errors.Is(err, fs.ErrNotExist) {
+				err = skippableErr(err)
+			}
+			return nil, err
 		}
 		rootFile, err = repoCacheDir.Create(".", unix.O_TMPFILE|unix.O_RDWR|unix.O_NOFOLLOW, 0o644)
 		if err != nil {
