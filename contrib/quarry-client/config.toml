@@ -83,8 +83,8 @@ cache_dir = "/var/lib/quarry-client/latest-metadata"
 ## request then carries the machine's WIMSE workload identity token for
 ## "wit_audience", from the varlink service at "varlink" implementing
 ## com.amutable.IdentityAgent (default: amutablectl's, at
-## unix:/run/amutable/com.amutable.IdentityAgent), and an RFC 9421 signature
-## by a key quarry-client holds in memory and the token binds. The signature
-## is for "wimse_audience" (default: the URL of the request). Redirects are
-## not signed. "wimse" is the only supported type.
+## unix:/run/varlink/registry/com.amutable.IdentityAgent), and an RFC 9421
+## signature by a key quarry-client holds in memory and the token binds. The
+## signature is for "wimse_audience" (default: the URL of the request).
+## Redirects are not signed. "wimse" is the only supported type.
 #auth = { type = "wimse", wit_audience = "urn:amutable:quarry-worker" }
