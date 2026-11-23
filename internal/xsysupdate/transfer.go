@@ -228,6 +228,15 @@ func (ext *TransferFileExtension) patchTransferFile(wtr io.Writer, rdr io.Reader
 	return nil
 }
 
+// isPatchableDefinition returns whether transferPath is a file which should be
+// patched with a custom [Source] Path= value (in particular, .transfer files
+// or any .transfer.d/*.conf drop-ins).
+func isPatchableDefinition(transferPath string) bool {
+	dir, file := filepath.Split(transferPath)      //nolint:forbidigo // lexical check only
+	return strings.HasSuffix(file, ".transfer") || // transfer file
+		(strings.HasSuffix(file, ".conf") && strings.HasSuffix(dir, ".transfer.d/")) // drop-in
+}
+
 // ApplyTarget saves the transfer file from the repository to the per-update
 // transfer directory.
 func (ext *TransferFileExtension) ApplyTarget(ctx context.Context, info *tufclient.TargetInfo) (_ bool, Err error) {
@@ -253,7 +262,12 @@ func (ext *TransferFileExtension) ApplyTarget(ctx context.Context, info *tufclie
 
 	srcRdr := progressbar.NewReader(srcTransferFile,
 		progressbar.DefaultBytes(info.Length, info.Path))
-	if err := ext.patchTransferFile(dstTransferTmpFile, &srcRdr); err != nil {
+	if isPatchableDefinition(transferPath) {
+		err = ext.patchTransferFile(dstTransferTmpFile, &srcRdr)
+	} else {
+		_, err = io.Copy(dstTransferTmpFile, &srcRdr)
+	}
+	if err != nil {
 		return false, fmt.Errorf("write transfer file %s to tmpfile: %w", info.Path, err)
 	}
 	if err := srcTransferFile.Close(); err != nil {

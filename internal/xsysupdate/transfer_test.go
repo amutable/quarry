@@ -648,6 +648,60 @@ func TestApplyTarget_NestedPath(t *testing.T) {
 	assert.True(t, info2.Mode().IsRegular())
 }
 
+func TestIsPatchableDefinition(t *testing.T) {
+	for transferPath, want := range map[string]bool{
+		"sysupdate.d/foo.transfer":              true,
+		"sysupdate.k8s.d/foo.transfer":          true,
+		"sysupdate.d/foo.transfer.d/x.conf":     true,
+		"sysupdate.k8s.d/foo.transfer.d/x.conf": true,
+		"sysupdate.k8s.component":               false,
+		"sysupdate.k8s.component.d/x.conf":      false,
+		"sysupdate.d/docker.feature":            false,
+		"sysupdate.d/docker.feature.d/x.conf":   false,
+		"sysupdate.d/foo.transfer.d/x.txt":      false,
+		"sysupdate.d/foo.conf":                  false,
+	} {
+		assert.Equal(t, want, isPatchableDefinition(transferPath), transferPath)
+	}
+}
+
+// Only transfer files and their drop-ins get the source path override. Other
+// definitions are installed byte-for-byte.
+func TestApplyTarget_PatchesOnlyTransfers(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+
+	const (
+		componentBody = "[Component]\nDescription=k8s\n"
+		dropinBody    = "[Source]\nPath=https://upstream.example.com/\n"
+	)
+	srv := testrepo.New(t)
+	componentTarget := srv.WriteTarget(t, ".quarry/sysupdate.k8s.component", strings.NewReader(componentBody))
+	dropinTarget := srv.WriteTarget(t, ".quarry/sysupdate.k8s.d/foo.transfer.d/x.conf", strings.NewReader(dropinBody))
+	repo := makeRepo(t, srv, "testrepo")
+
+	proxyURL := "http://localhost:9999/"
+	ext := &TransferFileExtension{OverrideSourcePathURL: &proxyURL}
+	_, err := ext.Init(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ext.Close() })
+
+	for _, target := range []*tufmetadata.TargetFiles{componentTarget, dropinTarget} {
+		applied, err := ext.ApplyTarget(ctx, &tufclient.TargetInfo{TargetFiles: target, Repo: repo})
+		require.NoError(t, err)
+		assert.True(t, applied, target.Path)
+	}
+
+	out, err := os.ReadFile(filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.k8s.component")) //nolint:forbidigo // test code
+	require.NoError(t, err)
+	assert.Equal(t, componentBody, string(out), "component file is not patched")
+
+	out, err = os.ReadFile(filepath.Join(env.storeDir, fixedNewDirSubpath, "sysupdate.k8s.d", "foo.transfer.d", "x.conf")) //nolint:forbidigo // test code
+	require.NoError(t, err)
+	cfg, err := ini.Load(out)
+	require.NoError(t, err)
+	assert.Equal(t, proxyURL, cfg.Section("Source").Key("Path").String(), "transfer drop-in is patched")
+}
+
 func TestClose_Idempotent(t *testing.T) {
 	_, ctx := setupTestEnv(t)
 	ext := initExt(ctx, t)
