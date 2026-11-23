@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -28,7 +29,7 @@ func quarryTargetsFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringSliceFlag{
 			Name:  "quarry-transfer-dir",
-			Usage: "ship sysupdate definitions for one component, given as <component dir>=<source>. <component dir> is the component's sysupdate definitions directory. It is \"sysupdate.d\" for the default component or \"sysupdate.<component>.d\". <source> is a directory of definitions (*.transfer, *.feature, <component>.component and drop-in directories) or \"" + confextSourcePrefix + "<name>\" for a generated transfer installing the confext DDI <name>_<version>.confext.raw. Repeat the option for the same <component dir> to merge sources. The files are published under " + transferlayout.Prefix + "<component dir>/. For a named component, <component>.component is generated (without Enabled=, so it is an enabled-by-default component) if no source ships it",
+			Usage: "ship sysupdate definitions given as <component dir>=<source>, where <component dir> is \"sysupdate.d\" or \"sysupdate.<component>.d\" and <source> is a directory of definitions or \"" + confextSourcePrefix + "<name>\" to generate a transfer for the confext <name>. Can be repeated. Components are enabled by default; to use a custom component file, place it in the <source> directory as <component>.component (<component>.component.d/ drop-ins are also supported)",
 		},
 		// TODO: This should probably allow you to specify a subset of targets
 		// to apply this to, as applying it to everything is kinda aggressive.
@@ -160,6 +161,10 @@ func addDefinitionSource(builder *tufext.TargetsBuilder, componentDir, source st
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		targetPath, err := definitionTargetPath(componentDir, rel)
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w", componentDir, rel, err)
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
@@ -175,10 +180,6 @@ func addDefinitionSource(builder *tufext.TargetsBuilder, componentDir, source st
 			return err
 		}
 		found = true
-		targetPath, err := transferlayout.TargetPath(componentDir, rel)
-		if err != nil {
-			return fmt.Errorf("%s: %s: %w", componentDir, rel, err)
-		}
 		if err := addInlineTarget(builder, targetPath, data); err != nil {
 			return fmt.Errorf("%s: %w", source, err)
 		}
@@ -191,6 +192,36 @@ func addDefinitionSource(builder *tufext.TargetsBuilder, componentDir, source st
 		return fmt.Errorf("%s holds no definition files", source)
 	}
 	return nil
+}
+
+// isComponentDefinition returns whether rel is a component file or lies in a
+// component drop-in directory.
+func isComponentDefinition(rel string) bool {
+	return strings.HasSuffix(rel, ".component") || strings.Contains(rel, ".component.d/")
+}
+
+// definitionTargetPath returns the target path of the definition file rel of a
+// source for componentDir. The component's own <component>.component and
+// <component>.component.d/ at the top of the source are published as the
+// component file and drop-in directory. Any other component file or drop-in
+// directory is an error.
+func definitionTargetPath(componentDir, rel string) (string, error) {
+	if !isComponentDefinition(rel) {
+		return transferlayout.TargetPath(componentDir, rel)
+	}
+	// quarrySpecFromFlags already checked the directory name.
+	component, _ := transferlayout.ParseComponentDir(componentDir)
+	if component == "" {
+		return "", errors.New("the default component has no component file or drop-ins")
+	}
+	componentFile := component + ".component"
+	if rel == componentFile {
+		return transferlayout.ComponentFilePath(component)
+	}
+	if dropIn, ok := strings.CutPrefix(rel, componentFile+".d/"); ok && !isComponentDefinition(dropIn) {
+		return transferlayout.ComponentDropInPath(component, dropIn)
+	}
+	return "", fmt.Errorf("unexpected component definition (only %s and %s.d/ are allowed)", componentFile, componentFile)
 }
 
 // addQuarryTargets adds what the --quarry-* options ask for to the targets.
@@ -209,11 +240,9 @@ func addQuarryTargets(builder *tufext.TargetsBuilder, sources []quarryTransferSo
 		}
 	}
 	for component := range components {
-		componentDir := transferlayout.ComponentDir(component)
-		componentFile := component + ".component"
-		componentPath, err := transferlayout.TargetPath(componentDir, componentFile)
+		componentPath, err := transferlayout.ComponentFilePath(component)
 		if err != nil {
-			return fmt.Errorf("%s: %s: %w", componentDir, componentFile, err)
+			return fmt.Errorf("component %s: %w", component, err)
 		}
 		if _, ok := builder.TargetsType().Targets[componentPath]; ok {
 			continue
