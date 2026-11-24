@@ -44,6 +44,33 @@ func TestComponentDir(t *testing.T) {
 	}
 }
 
+func TestComponentFilePath(t *testing.T) {
+	path, err := ComponentFilePath("k8s")
+	require.NoError(t, err)
+	assert.Equal(t, ".quarry/sysupdate.k8s.component", path)
+
+	for _, component := range []string{"", "a.b", "a/b", ".."} {
+		_, err := ComponentFilePath(component)
+		require.Error(t, err, "component %q", component)
+	}
+}
+
+func TestComponentDropInPath(t *testing.T) {
+	path, err := ComponentDropInPath("k8s", "10-x.conf")
+	require.NoError(t, err)
+	assert.Equal(t, ".quarry/sysupdate.k8s.component.d/10-x.conf", path)
+
+	for _, tc := range []struct{ component, file string }{
+		{"", "10-x.conf"},
+		{"a.b", "10-x.conf"},
+		{"k8s", ""},
+		{"k8s", "a/../b"},
+	} {
+		_, err := ComponentDropInPath(tc.component, tc.file)
+		require.Error(t, err, "%v", tc)
+	}
+}
+
 func TestComponentFile(t *testing.T) {
 	assert.Equal(t, "[Component]\nDescription=k8s\n", string(ComponentFile("k8s")))
 }

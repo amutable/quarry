@@ -3,7 +3,8 @@
 
 // Package transferlayout describes the repository layout of what quarry
 // ships as special TUF targets for systemd-sysupdate. This covers the
-// transfer definition directories under ".quarry/".
+// transfer definition directories, component files and component drop-in
+// directories under ".quarry/".
 //
 // hardhat writes this layout ("hardhat targets --quarry-*") and
 // quarry-sysupdate (internal/xsysupdate) reads it, so both sides share the
@@ -11,6 +12,7 @@
 package transferlayout
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -63,16 +65,52 @@ func TargetPath(dir, file string) (string, error) {
 	if _, err := ParseComponentDir(dir); err != nil {
 		return "", err
 	}
-	for part := range strings.SplitSeq(file, "/") {
-		if !ValidPathComponent(part) {
-			return "", fmt.Errorf("invalid transfer file path %q", file)
-		}
+	if err := checkFilePath(file); err != nil {
+		return "", err
 	}
 	return Prefix + dir + "/" + file, nil
 }
 
+// checkFilePath returns an error unless file is a relative path made of valid
+// path elements.
+func checkFilePath(file string) error {
+	for part := range strings.SplitSeq(file, "/") {
+		if !ValidPathComponent(part) {
+			return fmt.Errorf("invalid transfer file path %q", file)
+		}
+	}
+	return nil
+}
+
+// ComponentFilePath returns the target path of a named component's definition
+// file, which is "<Prefix>sysupdate.<component>.component". The default
+// component has no component file.
+func ComponentFilePath(component string) (string, error) {
+	if component == "" {
+		return "", errors.New("the default component has no component file")
+	}
+	if _, err := ParseComponentDir(ComponentDir(component)); err != nil {
+		return "", err
+	}
+	return Prefix + "sysupdate." + component + ".component", nil
+}
+
+// ComponentDropInPath returns the target path of one file of a named
+// component's drop-in directory, which is
+// "<Prefix>sysupdate.<component>.component.d/<file>".
+func ComponentDropInPath(component, file string) (string, error) {
+	componentPath, err := ComponentFilePath(component)
+	if err != nil {
+		return "", err
+	}
+	if err := checkFilePath(file); err != nil {
+		return "", err
+	}
+	return componentPath + ".d/" + file, nil
+}
+
 // ComponentFile returns the generated "<component>.component" definition for
-// a component directory that ships none. It sets no Enabled=, so it is an
+// a component that ships none. It sets no Enabled=, so it is an
 // enabled-by-default component as in sysupdate.
 func ComponentFile(component string) []byte {
 	return []byte("[Component]\nDescription=" + component + "\n")
