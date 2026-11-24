@@ -7,10 +7,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/urfave/cli/v3"
 
+	"go.amutable.dev/quarry/cmd/internal/cliext"
 	"go.amutable.dev/quarry/internal/hostnamed"
 	"go.amutable.dev/quarry/internal/third_party/assert"
 	"go.amutable.dev/quarry/internal/tufclient"
@@ -119,10 +121,11 @@ func updatePass(ctx context.Context) error {
 var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(&cli.Command{
 	Name:  "update",
 	Usage: "extended 'systemd-sysupdate update' wrapper",
-	Action: func(ctx context.Context, _ *cli.Command) (Err error) {
-		// A refreshed confext may ship machine-tags.d(5) files, and features gated on
-		// those tags were evaluated against the old tags. Loop until the tags
-		// settle.
+	Action: func(ctx context.Context, cmd *cli.Command) (Err error) {
+		// A refreshed confext may ship machine-tags.d(5) files, and features
+		// gated on those tags were evaluated against the old tags. It may also
+		// ship quarry-client drop-ins, and the repositories they add were not
+		// part of the scan for extension targets. Loop until both settle.
 		// TODO: The real signal to stop looping is whether the set of
 		// installable features stopped changing (rather than the tags), but
 		// there isn't a really nice way for us to detect that so we use tags
@@ -133,11 +136,11 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 		if err != nil {
 			return fmt.Errorf("fetch machine tags before update: %w", err)
 		}
-		if err := updatePass(ctx); err != nil {
-			return err
-		}
-
 		for iteration := 1; ; iteration++ {
+			if err := updatePass(ctx); err != nil {
+				return err
+			}
+
 			// Do online-reload of sysexts and confexts.
 			slog.Info("Trigger online-reload of new components.")
 			if err := sysupdateRefresh(ctx); err != nil {
@@ -148,23 +151,26 @@ var updateCommand = withExtensionDirFlag(withQuarryUserFlag(withQuarryProxyFlag(
 			if err != nil {
 				return fmt.Errorf("fetch machine tags after refresh: %w", err)
 			}
-			if slices.Equal(tags, newTags) {
+			// Our configuration is from before the refresh.
+			newCfg, err := cliext.LoadConfig(cmd)
+			if err != nil {
+				return fmt.Errorf("reload configuration after refresh: %w", err)
+			}
+			repos := slices.Sorted(maps.Keys(cliext.CtxConfig(ctx).Repos))
+			newRepos := slices.Sorted(maps.Keys(newCfg.Repos))
+			if slices.Equal(tags, newTags) && slices.Equal(repos, newRepos) {
 				return nil
 			}
 			if iteration >= maxUpdateIterations {
 				slog.Warn("Maximum number of update iterations reached, not looking for further updates.",
-					"max", maxUpdateIterations, "before", tags, "after", newTags)
+					"max", maxUpdateIterations, "before", tags, "after", newTags,
+					"reposBefore", repos, "reposAfter", newRepos)
 				return nil
 			}
-			slog.Info("Machine tags changed by refresh, running another update pass.",
-				"iteration", iteration, "before", tags, "after", newTags)
-			tags = newTags
-			if err := enableSuggested(ctx); err != nil {
-				return err
-			}
-			if err := sysupdateAll(ctx); err != nil {
-				return err
-			}
+			slog.Info("Machine tags or repositories changed by refresh, running another update pass.",
+				"iteration", iteration, "before", tags, "after", newTags,
+				"reposBefore", repos, "reposAfter", newRepos)
+			tags, ctx = newTags, cliext.WithCtxConfig(ctx, newCfg)
 		}
 	},
 })))
