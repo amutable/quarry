@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,34 @@ func TestInit_WithExistingLive(t *testing.T) {
 
 	_, err = os.Lstat(filepath.Join(env.storeDir, liveLink)) //nolint:forbidigo // test code
 	assert.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+// One run of quarry-sysupdate can make several passes, and they all have the
+// same reference time. A later pass must not reuse the directory of an
+// earlier one: that directory is live, and it is what Abort restores.
+func TestInit_LaterPassGetsItsOwnDir(t *testing.T) {
+	env, ctx := setupTestEnv(t)
+
+	subpaths := make([]string, 0, 3)
+	for range 3 {
+		ext := &TransferFileExtension{}
+		_, err := ext.Init(ctx)
+		require.NoError(t, err)
+		require.NoError(t, ext.BeforeUpdate(ctx))
+		subpaths = append(subpaths, ext.newDirSubpath)
+		require.NoError(t, ext.Close())
+	}
+
+	assert.Equal(t, fixedNewDirSubpath, subpaths[0])
+	assert.Len(t, slices.Compact(slices.Sorted(slices.Values(subpaths))), 3,
+		"every pass needs a directory of its own, got %v", subpaths)
+
+	target, err := os.Readlink(filepath.Join(env.storeDir, liveLink)) //nolint:forbidigo // test code
+	require.NoError(t, err)
+	assert.Equal(t, subpaths[2], target)
+	target, err = os.Readlink(filepath.Join(env.storeDir, lastLink)) //nolint:forbidigo // test code
+	require.NoError(t, err)
+	assert.Equal(t, subpaths[1], target)
 }
 
 func TestInit_LiveIsNotSymlink(t *testing.T) {
