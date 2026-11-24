@@ -40,27 +40,39 @@ func WithConfigFlag(cmd *cli.Command) *cli.Command {
 		})
 
 	cmd.Before = WrapBeforeFuncs(cmd.Before, func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-		var (
-			cfg *config.Config
-			err error
-		)
-		if cfgPath := cmd.String("config"); cfgPath != "" {
-			cfg, err = config.LoadPath(cfgPath)
-		} else {
-			cfg, err = config.Load()
-		}
+		cfg, err := LoadConfig(cmd)
 		if err != nil {
 			return nil, err
-		}
-		// Replace the in-memory config option with --cache-dir if the user
-		// explicitly requested it.
-		if cmd.IsSet("cache-dir") {
-			cfg.CacheDir = cmd.String("cache-dir")
 		}
 		return WithCtxConfig(ctx, cfg), nil
 	})
 
 	return cmd
+}
+
+// LoadConfig reads the configuration selected by the flags from
+// [WithConfigFlag]. Most users want [CtxConfig], which is the configuration
+// as it was when the command started. This is for commands that can outlive
+// a change to the configuration files.
+func LoadConfig(cmd *cli.Command) (*config.Config, error) {
+	var (
+		cfg *config.Config
+		err error
+	)
+	if cfgPath := cmd.String("config"); cfgPath != "" {
+		cfg, err = config.LoadPath(cfgPath)
+	} else {
+		cfg, err = config.Load()
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Replace the in-memory config option with --cache-dir if the user
+	// explicitly requested it.
+	if cmd.IsSet("cache-dir") {
+		cfg.CacheDir = cmd.String("cache-dir")
+	}
+	return cfg, nil
 }
 
 // CtxConfig returns the parsed --config flag value for [cli.Command]s
