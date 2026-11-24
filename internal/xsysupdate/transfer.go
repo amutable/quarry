@@ -196,9 +196,19 @@ func (ext *TransferFileExtension) Init(ctx context.Context) (_ context.Context, 
 		}
 	}
 
-	// Create a new time-based directory path.
+	// Create a new time-based directory path. The reference time is the same
+	// for every update pass of a run, so skip the directories of earlier
+	// passes -- the last one is live and is what Abort restores.
 	refTime, _ := ctxext.RefTime(ctx)
-	ext.newDirSubpath = fmt.Sprintf("update-%s.%d", refTime.Format(time.DateOnly), refTime.UnixMilli())
+	base := fmt.Sprintf("update-%s.%d", refTime.Format(time.DateOnly), refTime.UnixMilli())
+	ext.newDirSubpath = base
+	for n := 2; ; n++ {
+		// Anything else in the way is left for MkdirAll to complain about.
+		if info, err := pathrsext.Stat(ext.storeDir, ext.newDirSubpath); err != nil || !info.IsDir() {
+			break
+		}
+		ext.newDirSubpath = fmt.Sprintf("%s.%d", base, n)
+	}
 
 	newDirHandle, err := ext.storeDir.MkdirAll(ext.newDirSubpath, 0o755)
 	if err != nil {
